@@ -1,7 +1,7 @@
 import { clearSessionCookie } from "@/lib/auth";
 
-export async function POST() {
+export async function POST(request: Request) {
   const response = Response.json({ success: true });
-  response.headers.set("Set-Cookie", clearSessionCookie());
+  response.headers.set("Set-Cookie", clearSessionCookie(request));
   return response;
 }

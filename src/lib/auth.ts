@@ -30,6 +30,11 @@ export function assertSessionConfiguration() {
   getSessionSecret();
 }
 
+function usesSecureCookie(request: Request) {
+  const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",")[0].trim().toLowerCase();
+  return forwardedProtocol ? forwardedProtocol === "https" : new URL(request.url).protocol === "https:";
+}
+
 export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
   const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
@@ -49,7 +54,7 @@ function signJwt(unsignedToken: string) {
   return createHmac("sha256", getSessionSecret()).update(unsignedToken).digest("base64url");
 }
 
-export function createSessionCookie(userId: string) {
+export function createSessionCookie(userId: string, request: Request) {
   const issuedAt = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({
@@ -61,12 +66,12 @@ export function createSessionCookie(userId: string) {
   })).toString("base64url");
   const unsignedToken = `${header}.${payload}`;
   const value = `${unsignedToken}.${signJwt(unsignedToken)}`;
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const secure = usesSecureCookie(request) ? "; Secure" : "";
   return `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionLifetimeSeconds}${secure}`;
 }
 
-export function clearSessionCookie() {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+export function clearSessionCookie(request: Request) {
+  const secure = usesSecureCookie(request) ? "; Secure" : "";
   return `${cookieName}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
 }
 

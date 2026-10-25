@@ -48,7 +48,7 @@ export async function POST(request: Request) {
       },
       { status: 201 },
     );
-    response.headers.set("Set-Cookie", createSessionCookie(user.id));
+    response.headers.set("Set-Cookie", createSessionCookie(user.id, request));
     return response;
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === 11000) {

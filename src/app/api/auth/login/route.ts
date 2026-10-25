@@ -32,7 +32,7 @@ export async function POST(request: Request) {
         verificationStatus: user.verificationStatus,
       },
     });
-    response.headers.set("Set-Cookie", createSessionCookie(user.id));
+    response.headers.set("Set-Cookie", createSessionCookie(user.id, request));
     return response;
   } catch (error) {
     console.error("Login failed:", error);

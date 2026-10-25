@@ -28,7 +28,11 @@ Set these environment variables in the hosting provider before deploying:
 - `MONGODB_URI`: a reachable MongoDB Atlas connection string or other production MongoDB URI. Do not use the example `127.0.0.1` URI for a hosted deployment. Ensure the database user has access and the host allows network access from the deployment.
 - `JWT_SECRET`: a private random secret of at least 32 characters. Keep the same value across application instances and deployments so signed-in sessions remain valid.
 
+For local development and builds, Next.js automatically loads these values from the ignored `.env.local` file at the project root. Vercel does not automatically read your local `.env.local`; add each variable separately in the Vercel project settings.
+
 Citizen registration and sign-in use an email address as the account identifier and a password. Email verification, OTP, and an email provider are not required. A MongoDB connection and `JWT_SECRET` are still required to create accounts and sessions. If registration or sign-in returns a configuration error, check the deployment logs and these environment variables, then redeploy.
+
+Session cookies are marked `Secure` when the incoming request uses HTTPS (including HTTPS reported by the deployment proxy). Use HTTPS for production access; plain HTTP is supported for local development and LAN testing but does not protect session cookies in transit.
 
 ## Included
 
