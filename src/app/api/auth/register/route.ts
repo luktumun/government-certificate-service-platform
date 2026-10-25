@@ -17,6 +17,12 @@ export async function POST(request: Request) {
     if (phone && !/^[+\d][\d\s()-]{7,23}$/.test(phone)) {
       return apiError("Enter a valid phone number.", 400);
     }
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+      return apiError("JWT_SECRET is missing or shorter than 32 characters in this Vercel deployment.", 503);
+    }
+    if (!process.env.MONGODB_URI) {
+      return apiError("MONGODB_URI is missing from this Vercel deployment.", 503);
+    }
 
     assertSessionConfiguration();
     await connectToDatabase();
@@ -40,7 +46,7 @@ export async function POST(request: Request) {
     }
     console.error("Registration failed:", error);
     return apiError(
-      "Registration is unavailable. The site administrator must configure a reachable MongoDB database and a JWT_SECRET of at least 32 characters.",
+      "MongoDB could not be reached. Check the Vercel MONGODB_URI, Atlas database username/password, and Atlas Network Access allowlist.",
       503,
     );
   }
