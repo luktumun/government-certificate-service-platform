@@ -1,10 +1,8 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import mongoose from "mongoose";
 import { apiError } from "@/lib/api";
 import { getSessionUser } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { ServiceRequest } from "@/lib/models";
+import { ServiceRequest, UploadedFile } from "@/lib/models";
 
 export async function GET(
   request: Request,
@@ -24,7 +22,7 @@ export async function GET(
     const serviceRequest = await ServiceRequest.findById(id).select("+documents.storageKey");
     if (!serviceRequest) return apiError("Service request not found.", 404);
 
-    const ownsRequest = serviceRequest.citizen.equals(user.id);
+    const ownsRequest = serviceRequest.citizen?.equals(user.id) ?? false;
     const assignedAgent = serviceRequest.assignedAgent?.equals(user.id) ?? false;
     if (!ownsRequest && !assignedAgent && user.role !== "admin") {
       return apiError("You cannot access these documents.", 403);
@@ -32,10 +30,10 @@ export async function GET(
 
     const document = serviceRequest.documents.id(documentId);
     if (!document) return apiError("Document not found.", 404);
-    const safeStorageKey = path.basename(document.storageKey);
-    if (safeStorageKey !== document.storageKey) return apiError("Document not found.", 404);
-    const bytes = await readFile(path.join(process.cwd(), ".private-uploads", safeStorageKey));
+    const uploadedFile = await UploadedFile.findOne({ storageKey: document.storageKey }).select("+content");
+    if (!uploadedFile) return apiError("Document file not found.", 404);
     const filename = document.originalName.replace(/["\r\n]/g, "_");
+    const bytes = new Uint8Array(uploadedFile.content);
     return new Response(bytes, {
       headers: {
         "Content-Type": document.mimeType,

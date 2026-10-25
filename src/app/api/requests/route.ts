@@ -1,10 +1,8 @@
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { apiError } from "@/lib/api";
 import { getSessionUser } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { Service, ServiceRequest } from "@/lib/models";
+import { Service, ServiceRequest, UploadedFile } from "@/lib/models";
 
 const maximumFileSize = 10 * 1024 * 1024;
 const maximumFiles = 5;
@@ -81,8 +79,7 @@ export async function POST(request: Request) {
     const declaredSize = Number(request.headers.get("content-length"));
     if (declaredSize > maximumRequestSize) return apiError("The request is too large.", 413);
     const user = await getSessionUser(request);
-    if (!user) return apiError("Sign in before requesting a service.", 401);
-    if (user.role !== "citizen") return apiError("Only citizen accounts can submit requests.", 403);
+    if (user && user.role !== "citizen") return apiError("Only citizens can submit service requests.", 403);
 
     const form = await request.formData();
     const serviceSlug = form.get("serviceSlug");
@@ -90,7 +87,9 @@ export async function POST(request: Request) {
     const contactPhone = form.get("contactPhone");
     const location = form.get("location");
     const notes = form.get("notes");
-    const files = form.getAll("documents").filter((entry): entry is File => entry instanceof File && entry.size > 0);
+    const additionalFiles = form
+      .getAll("documents")
+      .filter((entry): entry is File => entry instanceof File && entry.size > 0);
 
     if (
       typeof serviceSlug !== "string" ||
@@ -106,15 +105,24 @@ export async function POST(request: Request) {
     ) {
       return apiError("Check the applicant, phone, and location details and try again.", 400);
     }
-    if (files.length > maximumFiles) return apiError("Upload no more than 5 documents.", 400);
-
     await connectToDatabase();
     const service = await Service.findOne({ slug: serviceSlug, active: true });
     if (!service) return apiError("That service is unavailable.", 404);
 
-    const uploadDirectory = path.join(process.cwd(), ".private-uploads");
+    const requiredFiles = service.requiredDocuments.flatMap((documentType, index) => {
+      const entry = form.get(`requiredDocument-${index}`);
+      if (entry === null) return [];
+      if (!(entry instanceof File)) throw new Error("INVALID_DOCUMENT_FIELD");
+      return entry.size > 0 ? [{ file: entry, documentType }] : [];
+    });
+    const files = [
+      ...requiredFiles,
+      ...additionalFiles.map((file) => ({ file, documentType: "Additional supporting document" })),
+    ];
+    if (files.length > maximumFiles) return apiError("Upload no more than 5 documents.", 400);
+
     const documents = [];
-    for (const file of files) {
+    for (const { file, documentType } of files) {
       if (!acceptedTypes.has(file.type) || file.size > maximumFileSize) {
         throw new Error("INVALID_UPLOAD");
       }
@@ -122,15 +130,14 @@ export async function POST(request: Request) {
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (!hasValidFileSignature(bytes, file.type)) throw new Error("INVALID_UPLOAD");
 
-      await mkdir(uploadDirectory, { recursive: true });
       const extension = file.type === "application/pdf" ? ".pdf" : file.type === "image/png" ? ".png" : ".jpg";
       const storageKey = `${randomUUID()}${extension}`;
-      const absolutePath = path.join(uploadDirectory, storageKey);
-      await writeFile(absolutePath, bytes, { flag: "wx", mode: 0o600 });
-      savedFiles.push(absolutePath);
+      await UploadedFile.create({ storageKey, content: Buffer.from(bytes) });
+      savedFiles.push(storageKey);
 
       documents.push({
         originalName: file.name.replace(/[^\w.-]/g, "_").slice(0, 100) || "document",
+        documentType,
         storageKey,
         mimeType: file.type,
         size: file.size,
@@ -140,7 +147,7 @@ export async function POST(request: Request) {
     const reference = `JS-${new Date().getFullYear()}-${randomBytes(3).toString("hex").toUpperCase()}`;
     const created = await ServiceRequest.create({
       reference,
-      citizen: user.id,
+      ...(user ? { citizen: user.id } : {}),
       service: service.id,
       serviceName: service.name,
       applicantName: applicantName.trim(),
@@ -152,16 +159,32 @@ export async function POST(request: Request) {
       governmentFee: service.governmentFee,
       assistanceFee: service.assistanceFee,
       documents,
-      timeline: [{ status: "submitted", note: "Request submitted for review.", updatedBy: user.id }],
+      timeline: [{ status: "submitted", note: "Request submitted for review.", ...(user ? { updatedBy: user.id } : {}) }],
     });
     return Response.json(
-      { request: { id: created.id, reference: created.reference, status: created.status } },
+      {
+        request: {
+          id: created.id,
+          reference: created.reference,
+          status: created.status,
+          serviceName: created.serviceName,
+        },
+      },
       { status: 201 },
     );
   } catch (error) {
-    await Promise.all(savedFiles.map((filePath) => unlink(filePath).catch(() => undefined)));
+    if (savedFiles.length > 0) {
+      try {
+        await UploadedFile.deleteMany({ storageKey: { $in: savedFiles } });
+      } catch (cleanupError) {
+        console.error("Failed to clean up uploaded request files:", cleanupError);
+      }
+    }
     if (error instanceof Error && error.message === "INVALID_UPLOAD") {
       return apiError("Upload a valid PDF, JPG, or PNG file (10 MB maximum each).", 400);
+    }
+    if (error instanceof Error && error.message === "INVALID_DOCUMENT_FIELD") {
+      return apiError("A document upload field was invalid. Please try again.", 400);
     }
     console.error("Service request submission failed:", error);
     return apiError("Your request could not be submitted right now.", 503);

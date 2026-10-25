@@ -42,9 +42,16 @@ interface ServiceRecord {
 interface UploadedDocumentRecord {
   _id: Types.ObjectId;
   originalName: string;
+  documentType?: string;
   storageKey: string;
   mimeType: string;
   size: number;
+}
+
+interface UploadedFileRecord {
+  _id: Types.ObjectId;
+  storageKey: string;
+  content: Buffer;
 }
 
 interface TimelineEntryRecord {
@@ -57,7 +64,7 @@ interface TimelineEntryRecord {
 export interface ServiceRequestRecord {
   _id: Types.ObjectId;
   reference: string;
-  citizen: Types.ObjectId;
+  citizen?: Types.ObjectId;
   service: Types.ObjectId;
   serviceName: string;
   applicantName: string;
@@ -117,9 +124,18 @@ const serviceSchema = new Schema<ServiceRecord>(
 const uploadedDocumentSchema = new Schema<UploadedDocumentRecord>(
   {
     originalName: { type: String, required: true },
+    documentType: { type: String, trim: true, maxlength: 100 },
     storageKey: { type: String, required: true, select: false },
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
+  },
+  { timestamps: true },
+);
+
+const uploadedFileSchema = new Schema<UploadedFileRecord>(
+  {
+    storageKey: { type: String, required: true, unique: true, select: false },
+    content: { type: Buffer, required: true, select: false },
   },
   { timestamps: true },
 );
@@ -136,7 +152,7 @@ const timelineEntrySchema = new Schema<TimelineEntryRecord>(
 const serviceRequestSchema = new Schema<ServiceRequestRecord>(
   {
     reference: { type: String, required: true, unique: true },
-    citizen: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    citizen: { type: Schema.Types.ObjectId, ref: "User", index: true },
     service: { type: Schema.Types.ObjectId, ref: "Service", required: true },
     serviceName: { type: String, required: true },
     applicantName: { type: String, required: true, trim: true, maxlength: 100 },
@@ -199,6 +215,9 @@ export const Service =
 export const ServiceRequest =
   (mongoose.models.ServiceRequest as Model<ServiceRequestRecord> | undefined) ??
   mongoose.model<ServiceRequestRecord>("ServiceRequest", serviceRequestSchema, "janseva_service_requests");
+export const UploadedFile =
+  (mongoose.models.UploadedFile as Model<UploadedFileRecord> | undefined) ??
+  mongoose.model<UploadedFileRecord>("UploadedFile", uploadedFileSchema, "janseva_uploaded_files");
 export const Complaint =
   (mongoose.models.Complaint as Model<ComplaintRecord> | undefined) ??
   mongoose.model<ComplaintRecord>("Complaint", complaintSchema, "janseva_complaints");

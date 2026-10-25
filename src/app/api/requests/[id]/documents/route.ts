@@ -1,11 +1,9 @@
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import { apiError } from "@/lib/api";
 import { getSessionUser } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
-import { ServiceRequest } from "@/lib/models";
+import { ServiceRequest, UploadedFile } from "@/lib/models";
 
 const maximumFileSize = 10 * 1024 * 1024;
 const maximumFiles = 5;
@@ -35,7 +33,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     await connectToDatabase();
     const serviceRequest = await ServiceRequest.findById(id).select("+documents.storageKey");
     if (!serviceRequest) return apiError("Service request not found.", 404);
-    const isCitizen = serviceRequest.citizen.equals(user.id);
+    const isCitizen = serviceRequest.citizen?.equals(user.id) ?? false;
     const isAssignedAgent = serviceRequest.assignedAgent?.equals(user.id) ?? false;
     if (!isCitizen && !isAssignedAgent && user.role !== "admin") {
       return apiError("You cannot add documents to this request.", 403);
@@ -48,7 +46,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return apiError("A request can contain no more than 5 documents.", 400);
     }
 
-    const uploadDirectory = path.join(process.cwd(), ".private-uploads");
     const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
     for (const file of files) {
       if (!allowedTypes.has(file.type) || file.size > maximumFileSize) {
@@ -57,12 +54,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (!hasValidFileSignature(bytes, file.type)) throw new Error("INVALID_UPLOAD");
 
-      await mkdir(uploadDirectory, { recursive: true });
       const extension = file.type === "application/pdf" ? ".pdf" : file.type === "image/png" ? ".png" : ".jpg";
       const storageKey = `${randomUUID()}${extension}`;
-      const absolutePath = path.join(uploadDirectory, storageKey);
-      await writeFile(absolutePath, bytes, { flag: "wx", mode: 0o600 });
-      savedFiles.push(absolutePath);
+      await UploadedFile.create({ storageKey, content: Buffer.from(bytes) });
+      savedFiles.push(storageKey);
       serviceRequest.documents.push({
         originalName: file.name.replace(/[^\w.-]/g, "_").slice(0, 100) || "document",
         storageKey,
@@ -79,7 +74,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       size: document.size,
     })) }, { status: 201 });
   } catch (error) {
-    await Promise.all(savedFiles.map((filePath) => unlink(filePath).catch(() => undefined)));
+    if (savedFiles.length > 0) {
+      try {
+        await UploadedFile.deleteMany({ storageKey: { $in: savedFiles } });
+      } catch (cleanupError) {
+        console.error("Failed to clean up uploaded request files:", cleanupError);
+      }
+    }
     if (error instanceof Error && error.message === "INVALID_UPLOAD") {
       return apiError("Upload a valid PDF, JPG, or PNG file (10 MB maximum each).", 400);
     }

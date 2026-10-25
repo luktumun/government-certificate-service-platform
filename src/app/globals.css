@@ -295,6 +295,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .form-field select { width: 100%; min-height: 36px; padding: 8px 10px; color: #364238; background: #fff; border: 1px solid #e5ebe4; border-radius: 6px; outline: 0; font-size: 10px; }
 .form-field input::placeholder, .form-field textarea::placeholder { color: #acb4ac; }
 .form-field input:focus, .form-field textarea:focus, .form-field select:focus { border-color: #9fc5a2; box-shadow: 0 0 0 3px #e8f2e7; }
+.document-checklist { display: grid; gap: 10px; padding: 10px; border: 1px solid #edf0eb; border-radius: 8px; }
 .upload-zone { display: flex; min-height: 58px; align-items: center; justify-content: center; gap: 8px; color: #80907f; background: #fafcf9; border: 1px dashed #cfdacd; border-radius: 7px; font-size: 9px; cursor: pointer; }
 .upload-zone:hover { background: #f4f8f2; border-color: #93b394; }
 .upload-zone > span b { color: #4f7954; font-weight: 650; }

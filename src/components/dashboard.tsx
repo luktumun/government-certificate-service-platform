@@ -27,7 +27,6 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  Upload,
   UsersRound,
   Wallet,
   X,
@@ -53,7 +52,7 @@ type ServiceRequest = {
   assistanceFee?: number;
   createdAt: string;
   timeline?: { status: string; note: string; createdAt?: string }[];
-  documents?: { _id: string; originalName: string; mimeType: string; size: number }[];
+  documents?: { _id: string; originalName: string; documentType?: string; mimeType: string; size: number }[];
   canAccept?: boolean;
   assignedAgent?: { name: string };
 };
@@ -135,6 +134,11 @@ export default function Dashboard() {
   const [requests, setRequests] = useState<ServiceRequest[]>(demoRequests);
   const [selectedService, setSelectedService] = useState<ServiceInfo | null>(null);
   const [detailRequest, setDetailRequest] = useState<ServiceRequest | null>(null);
+  const [submissionConfirmation, setSubmissionConfirmation] = useState<{
+    reference: string;
+    serviceName: string;
+    status: string;
+  } | null>(null);
   const [requestOpen, setRequestOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
@@ -191,7 +195,11 @@ export default function Dashboard() {
   }, []);
 
   const visibleServices = useMemo(
-    () => services.filter((service) => `${service.name} ${service.category}`.toLowerCase().includes(search.toLowerCase())),
+    () => services.filter((service) =>
+      `${service.name} ${service.category} ${service.description} ${service.requiredDocuments.join(" ")}`
+        .toLowerCase()
+        .includes(search.trim().toLowerCase()),
+    ),
     [search, services],
   );
   const activeRequests = requests.filter((request) => !["completed", "rejected", "cancelled"].includes(request.status));
@@ -207,13 +215,6 @@ export default function Dashboard() {
     setSelectedService(service);
     if (user && user.role !== "citizen") {
       setToast("Service requests can be submitted from a citizen account.");
-      return;
-    }
-    if (!user) {
-      setAuthMode("login");
-      setAuthRole("citizen");
-      setAuthOpen(true);
-      setError("");
       return;
     }
     setRequestOpen(true);
@@ -285,12 +286,16 @@ export default function Dashboard() {
     formData.set("serviceSlug", selectedService.slug);
     try {
       const response = await fetch("/api/requests", { method: "POST", body: formData });
-      const data = (await response.json()) as { request?: { reference: string }; error?: string };
+      const data = (await response.json()) as {
+        request?: { reference: string; serviceName: string; status: string };
+        error?: string;
+      };
       if (!response.ok || !data.request) throw new Error(data.error ?? "Request could not be submitted.");
       setRequestOpen(false);
       setPanel("requests");
-      setToast(`Request ${data.request.reference} submitted successfully.`);
-      await loadRequests();
+      setRequests(user ? requests : []);
+      setSubmissionConfirmation(data.request);
+      if (user) await loadRequests();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Request could not be submitted.");
     } finally {
@@ -475,6 +480,7 @@ export default function Dashboard() {
       </section>
 
       {requestOpen && selectedService && <RequestModal service={selectedService} busy={requestBusy} error={error} onClose={() => { setRequestOpen(false); setError(""); }} onSubmit={submitRequest} />}
+      {submissionConfirmation && <RequestConfirmationModal request={submissionConfirmation} onClose={() => setSubmissionConfirmation(null)} />}
       {authOpen && <AuthModal mode={authMode} role={authRole} busy={authBusy} error={error} onClose={() => { setAuthOpen(false); setError(""); }} onMode={setAuthMode} onRole={setAuthRole} onSubmit={submitAuth} />}
       {detailRequest && <RequestDetailsModal request={detailRequest} user={user} onClose={() => setDetailRequest(null)} onUpdated={async () => { await loadRequests(); setDetailRequest(null); }} onNotice={setToast} />}
       {toast && <div className="toast"><div className="toast-check"><Check size={14} /></div><span>{toast}</span><button aria-label="Dismiss" onClick={() => setToast("")}><X size={16} /></button></div>}
@@ -507,7 +513,6 @@ function RequestRow({ request, onClick }: { request: ServiceRequest; onClick: ()
 }
 
 function RequestModal({ service, busy, error, onClose, onSubmit }: { service: ServiceInfo; busy: boolean; error: string; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  const inputId = "documents";
   const total = service.governmentFee + service.assistanceFee;
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -518,12 +523,70 @@ function RequestModal({ service, busy, error, onClose, onSubmit }: { service: Se
           <div className="form-grid"><label className="form-field"><span>Applicant’s full name</span><input name="applicantName" required minLength={2} maxLength={100} placeholder="As it appears on your ID" autoComplete="name" /></label><label className="form-field"><span>Mobile number</span><input name="contactPhone" type="tel" required minLength={8} maxLength={24} placeholder="+91 98765 43210" autoComplete="tel" /></label></div>
           <label className="form-field"><span>City / area</span><input name="location" required minLength={2} maxLength={200} placeholder="Your city, neighbourhood or PIN code" /></label>
           <label className="form-field"><span>Anything else we should know <small>Optional</small></span><textarea name="notes" rows={2} maxLength={1000} placeholder="Share any helpful context for your local expert" /></label>
-          <div className="form-field"><span>Your documents <small>PDF, JPG or PNG · Up to 10 MB each</small></span><label className="upload-zone" htmlFor={inputId}><Upload size={18} /><span><b>Choose files</b> or drop them here</span><input id={inputId} name="documents" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" multiple /></label><small className="field-hint">Your files are stored privately and only shared with the people handling your application.</small></div>
+          <div className="form-field">
+            <span>Documents for {service.name} <small>PDF, JPG or PNG · Up to 10 MB each</small></span>
+            <div className="document-checklist">
+              {service.requiredDocuments.map((document, index) => (
+                <label className="form-field" key={document}>
+                  <span>{document} <small>Optional — you can submit this later</small></span>
+                  <input
+                    name={`requiredDocument-${index}`}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                  />
+                </label>
+              ))}
+            </div>
+            <label className="form-field">
+              <span>Other supporting documents <small>Optional</small></span>
+              <input name="documents" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" multiple />
+            </label>
+            <small className="field-hint">Your files are stored privately and only shared with the people handling your application.</small>
+          </div>
           <div className="price-breakdown"><span><span>Government fee</span><span>{formatMoney(service.governmentFee)}</span></span><span><span>Agent assistance</span><span>{formatMoney(service.assistanceFee)}</span></span><span className="price-total"><strong>Total estimate</strong><strong>{formatMoney(total)}</strong></span></div>
           {error && <div className="form-error" role="alert">{error}</div>}
           <div className="modal-actions"><button className="secondary-button" type="button" onClick={onClose}>Not now</button><button className="primary-button" type="submit" disabled={busy}>{busy ? <><span className="spinner" /> Sending request…</> : <>Send request <ArrowRight size={16} /></>}</button></div>
           <p className="modal-footnote"><ShieldCheck size={14} /> No payment required to request help. The final government fee may vary.</p>
         </form>
+      </section>
+    </div>
+  );
+}
+
+function RequestConfirmationModal({
+  request,
+  onClose,
+}: {
+  request: { reference: string; serviceName: string; status: string };
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="modal request-modal" role="dialog" aria-modal="true" aria-labelledby="confirmation-title">
+        <div className="modal-top">
+          <div className="modal-icon modal-icon-green"><Check size={20} /></div>
+          <button className="icon-button" aria-label="Close confirmation" onClick={onClose}><X size={19} /></button>
+        </div>
+        <div className="auth-heading">
+          <div className="section-overline">REQUEST RECEIVED</div>
+          <h2 id="confirmation-title">Your request is submitted.</h2>
+          <p>We’ve received your service request. Save the reference below for your records.</p>
+        </div>
+        <div className="detail-section">
+          <div className="section-overline">SERVICE TYPE</div>
+          <h3>{request.serviceName}</h3>
+        </div>
+        <div className="detail-section">
+          <div className="section-overline">REQUEST REFERENCE</div>
+          <h3>{request.reference}</h3>
+          <p><span className={statusClass(request.status)}>{statusNames[request.status] ?? request.status}</span></p>
+        </div>
+        <p className="detail-muted">This guest request is not linked to an account, so it will not appear in request history. Keep your reference if you need to contact support.</p>
+        <div className="modal-actions">
+          <button className="primary-button" type="button" onClick={onClose}>Done <Check size={16} /></button>
+        </div>
       </section>
     </div>
   );
@@ -640,7 +703,7 @@ function RequestDetailsModal({ request, user, onClose, onUpdated, onNotice }: { 
         <div className="modal-top"><div className="modal-icon modal-icon-green"><FileCheck2 size={20} /></div><button className="icon-button" aria-label="Close dialog" onClick={onClose}><X size={19} /></button></div>
         <div className="detail-heading"><div><div className="section-overline">REQUEST {request.reference}</div><h2 id="detail-title">{request.serviceName}</h2><p>Submitted {formatDate(request.createdAt)} · {formatMoney(request.quotedTotal)}</p></div><span className={statusClass(request.status)}>{statusNames[request.status] ?? request.status}</span></div>
         <div className="detail-section"><div className="section-overline">APPLICATION PROGRESS</div><div className="timeline-list">{request.timeline && request.timeline.length > 0 ? [...request.timeline].reverse().map((entry, index) => <div className={`timeline-item ${index === 0 ? "timeline-item-current" : ""}`} key={`${entry.status}-${entry.createdAt ?? index}`}><span className="timeline-marker">{index === 0 ? <Check size={11} /> : null}</span><div><b>{statusNames[entry.status] ?? entry.status.replaceAll("_", " ")}</b><p>{entry.note}</p>{entry.createdAt && <small>{formatDate(entry.createdAt)}</small>}</div></div>) : <div className="timeline-empty"><Clock3 size={15} /> Request updates will appear here.</div>}</div></div>
-        <div className="detail-section"><div className="detail-section-heading"><div className="section-overline">YOUR DOCUMENTS</div>{request.documents && request.documents.length > 0 && <span>{request.documents.length} file{request.documents.length === 1 ? "" : "s"}</span>}</div>{request.documents && request.documents.length > 0 ? <div className="document-list">{request.documents.map((document) => <a className="document-row" href={`/api/requests/${request._id}/documents/${document._id}`} key={document._id}><span className="request-doc-icon"><FileText size={16} /></span><span><b>{document.originalName}</b><small>{document.mimeType} · {(document.size / (1024 * 1024)).toFixed(1)} MB</small></span><Download size={16} /></a>)}</div> : <p className="detail-muted">Documents added to this application will be listed here.</p>}</div>
+        <div className="detail-section"><div className="detail-section-heading"><div className="section-overline">YOUR DOCUMENTS</div>{request.documents && request.documents.length > 0 && <span>{request.documents.length} file{request.documents.length === 1 ? "" : "s"}</span>}</div>{request.documents && request.documents.length > 0 ? <div className="document-list">{request.documents.map((document) => <a className="document-row" href={`/api/requests/${request._id}/documents/${document._id}`} key={document._id}><span className="request-doc-icon"><FileText size={16} /></span><span><b>{document.documentType ?? document.originalName}</b><small>{document.documentType ? `${document.originalName} · ` : ""}{document.mimeType} · {(document.size / (1024 * 1024)).toFixed(1)} MB</small></span><Download size={16} /></a>)}</div> : <p className="detail-muted">Documents added to this application will be listed here.</p>}</div>
         {user && !request.canAccept && <div className="detail-upload"><form onSubmit={(event) => void uploadDocuments(event)}><label className="form-field"><span>Add documents <small>PDF, JPG or PNG · up to 10 MB each</small></span><input name="documents" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" multiple required /></label><button className="secondary-button" type="submit" disabled={uploadBusy}>{uploadBusy ? "Uploading…" : "Upload"}</button></form></div>}
         {canUpdate && nextStatuses.length > 0 && <div className="detail-update"><label className="form-field"><span>Update progress</span><select value={nextStatus} onChange={(event) => setNextStatus(event.target.value)}>{nextStatuses.map((status) => <option key={status} value={status}>{statusNames[status] ?? status}</option>)}</select></label><button className="primary-button" disabled={busy || nextStatus === request.status} onClick={() => void updateStatus()}>{busy ? "Saving…" : "Save update"}</button></div>}
         {user?.role === "citizen" && !request._id.startsWith("demo-") && <div className="complaint-form-section"><button className="complaint-toggle" onClick={() => setComplaintOpen(!complaintOpen)}><CircleHelp size={15} /> {complaintOpen ? "Close support form" : "Something not right? Raise a concern"}</button>{complaintOpen && <form className="complaint-form" onSubmit={(event) => void submitComplaint(event)}><label className="form-field"><span>What is this about?</span><select name="subject" required><option value="service_issue">Service issue</option><option value="delay">Application delay</option><option value="document_concern">Document concern</option><option value="payment">Fee or payment question</option><option value="other">Something else</option></select></label><label className="form-field"><span>Tell us a little more</span><textarea name="description" rows={3} minLength={10} maxLength={2000} required placeholder="Share what happened and how we can help." /></label><button className="primary-button" type="submit" disabled={complaintBusy}>{complaintBusy ? "Sending…" : "Send to support"}</button></form>}</div>}
