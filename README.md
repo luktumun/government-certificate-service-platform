@@ -21,6 +21,15 @@ A mobile-first Next.js application for citizens to find help with government cer
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Deployment configuration
+
+Set these environment variables in the hosting provider before deploying:
+
+- `MONGODB_URI`: a reachable MongoDB Atlas connection string or other production MongoDB URI. Do not use the example `127.0.0.1` URI for a hosted deployment. Ensure the database user has access and the host allows network access from the deployment.
+- `JWT_SECRET`: a private random secret of at least 32 characters. Keep the same value across application instances and deployments so signed-in sessions remain valid.
+
+Citizen registration and sign-in use an email address as the account identifier and a password. Email verification, OTP, and an email provider are not required. A MongoDB connection and `JWT_SECRET` are still required to create accounts and sessions. If registration or sign-in returns a configuration error, check the deployment logs and these environment variables, then redeploy.
+
 ## Included
 
 - Responsive citizen workspace, searchable government service catalog, request history, and request submission.

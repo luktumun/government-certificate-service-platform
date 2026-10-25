@@ -30,6 +30,9 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     console.error("Login failed:", error);
-    return apiError("Sign in is temporarily unavailable.", 503);
+    return apiError(
+      "Sign in is unavailable. The site administrator must configure a reachable MongoDB database and a JWT_SECRET of at least 32 characters.",
+      503,
+    );
   }
 }
